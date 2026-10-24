@@ -29,6 +29,14 @@ scripts/run_public.sh           # prepare inputs, adapt, eval, score into out/pu
 python -m judge baseline --test out/public/input/test.jsonl --output out/baseline
 ```
 
+Experiments are archived to `../plata-expert-judge/runs` (override with `RUNS_ARCHIVE`) with per-item status, vote split and fired rules:
+
+```sh
+python scripts/run_cv.py my_try       # 5-fold CV of adapt -> eval on train + test, fixed folds in data/public_folds.csv
+python scripts/stats.py my_try        # per-topic Wilson CI, bootstrap CI for macro (add --split cv for a CV run)
+python scripts/stats.py run_a run_b   # exact McNemar and paired bootstrap of the macro difference
+```
+
 ---
 
 # A Judge That Learns from an Expert (task)

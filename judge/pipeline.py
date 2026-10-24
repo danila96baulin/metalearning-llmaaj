@@ -9,11 +9,11 @@ import time
 from pathlib import Path
 
 from . import config
-from .check import OTHER_ID, checker_prompt, decide, run_checks
+from .check import OTHER_ID, bad_votes, checker_prompt, decide, run_checks
 from .data import TOPICS, card, load_dataset, majority_labels, nearest_good, write_atomic
 from .explain import render
 from .llm import LLM, LLMUnavailable
-from .rules import PROMPTS, consolidate, induce_topic, refine_topic
+from .rules import PROMPTS, consolidate, describe_boundaries, guidance_text, induce_topic, refine_topic
 
 
 def log(message):
@@ -60,17 +60,22 @@ def rule_stats(rows, votes, rules):
 
 
 def predictions(rows, votes, rulebook, fallback):
-    pred, fired = {}, {}
+    """Labels, fired rules, and per item the status and vote split that the run logs keep."""
+    pred, fired, detail = {}, {}, {}
     live = live_topics(rulebook)
     for row in rows:
-        label, fired[row["item_id"]] = None, []
+        item_votes = votes.get(row["item_id"]) or []
+        label, fired[row["item_id"]], split = None, [], 0
         if row["topic"] in live:
             active = [r["id"] for r in topic_rules(rulebook, row["topic"]) if r["active"]]
             if rulebook.get("other", {}).get("active"):
                 active.append(OTHER_ID)
-            label, fired[row["item_id"]] = decide(votes.get(row["item_id"]), active)
+            label, fired[row["item_id"]] = decide(item_votes, active)
+            split = bad_votes(item_votes, active)
+        status = "ok" if label else "fallback_topic" if row["topic"] not in live else "fallback_no_votes"
         pred[row["item_id"]] = label or fallback[row["topic"]]
-    return pred, fired
+        detail[row["item_id"]] = {"status": status, "votes_bad": split, "votes_total": len(item_votes)}
+    return pred, fired, detail
 
 
 def write_predictions(path, pred):
@@ -81,24 +86,32 @@ def write_predictions(path, pred):
     write_atomic(path, buffer.getvalue())
 
 
-def save_artifacts(art, rows, rulebook, fallback, votes, started):
+def save_artifacts(art, rows, rulebook, fallback, votes, started, llm=None, boundaries=None):
     prompts = prompts_for(rulebook)
     for topic, text in prompts.items():
         write_atomic(art / "prompts" / f"checker_{topic}.txt", text)
     rulebook_text = json.dumps(rulebook, ensure_ascii=False, indent=1)
     write_atomic(art / "rulebook.json", rulebook_text)
-    pred, fired = predictions(rows, votes, rulebook, fallback)
+    pred, fired, detail = predictions(rows, votes, rulebook, fallback)
     audit = [{"item_id": r["item_id"], "topic": r["topic"], "label": r["label"], "prediction": pred[r["item_id"]],
-              "fired": fired[r["item_id"]], "votes": votes.get(r["item_id"], [])} for r in rows]
+              "fired": fired[r["item_id"]], **detail[r["item_id"]], "votes": votes.get(r["item_id"], [])} for r in rows]
     write_atomic(art / "train_audit.jsonl", "".join(json.dumps(a, ensure_ascii=False) + "\n" for a in audit))
-    manifest = {"provider": config.PROVIDER, "inducer_model": config.INDUCER_MODEL, "checker_model": config.CHECKER_MODEL,
-                "inducer_thinking_level": config.INDUCER_THINKING_LEVEL or "default",
-                "checker_thinking_level": config.CHECKER_THINKING_LEVEL or "default",
-                "votes": rulebook["votes"], "rulebook_sha256": sha(rulebook_text),
-                "prompt_sha256": {t: sha(p) for t, p in prompts.items()}, "train_items": len(rows),
-                "train_macro_accuracy": round(macro_accuracy(rows, pred), 4), "seconds": round(time.monotonic() - started)}
+    used = llm is not None  # model fields stay empty when adapt ran without model access
+    manifest = {"provider": config.PROVIDER if used else None,
+                "inducer_model": config.INDUCER_MODEL if used else None,
+                "checker_model": config.CHECKER_MODEL if used else None,
+                "inducer_thinking_level": (config.INDUCER_THINKING_LEVEL or "default") if used else None,
+                "checker_thinking_level": (config.CHECKER_THINKING_LEVEL or "default") if used else None,
+                "votes": rulebook["votes"] if used else None, "rulebook_sha256": sha(rulebook_text),
+                "prompt_sha256": {t: sha(p) for t, p in prompts.items()},
+                "guidance_sha256": {t: sha(g) for t in ["all", *TOPICS] if (g := guidance_text(t))},
+                "train_items": len(rows), "train_macro_accuracy": round(macro_accuracy(rows, pred), 4),
+                "train_status": {s: sum(d["status"] == s for d in detail.values()) for s in sorted({d["status"] for d in detail.values()})},
+                "llm": llm.stats() if used else None, "seconds": round(time.monotonic() - started)}
     write_atomic(art / "manifest.json", json.dumps(manifest, indent=1))
-    write_atomic(art / "EXPLANATION.md", render(rows, rulebook, fallback, audit, manifest))
+    if boundaries is not None:
+        write_atomic(art / "boundaries.json", json.dumps(boundaries, ensure_ascii=False, indent=1))
+    write_atomic(art / "EXPLANATION.md", render(rows, rulebook, fallback, audit, manifest, boundaries))
     return pred
 
 
@@ -148,7 +161,7 @@ async def adapt(train_path, art_dir):
         return prompts_for(rulebook), {t: topic_rules(rulebook, t) for t in live}
 
     votes = await run_checks(llm, live_rows, *current(), 1)
-    save_artifacts(art, rows, rulebook, fallback, votes, started)
+    save_artifacts(art, rows, rulebook, fallback, votes, started, llm)
     half = {r["item_id"]: int(sha(r["item_id"]), 16) % 2 for r in rows}
     global_rules = rulebook["global"]["rules"]
     global_ids = [r["id"] for r in global_rules]
@@ -191,7 +204,7 @@ async def adapt(train_path, art_dir):
             rule["stats"] = stats[rule["id"]]
             rule["active"] = not (stats[rule["id"]]["fp"] >= stats[rule["id"]]["tp"] and stats[rule["id"]]["fp"] > 0)
     # OTHER stays on only if, among conversations the active rules pass as good, it catches more BAD than GOOD
-    rules_pred, _ = predictions(rows, votes, rulebook, fallback)
+    rules_pred, _, _ = predictions(rows, votes, rulebook, fallback)
     other = rulebook["other"]
     other.update(rule_stats(live_rows, votes, [other])[OTHER_ID])
     new_hits = [r for r in live_rows if rules_pred[r["item_id"]] == "good" and decide(votes[r["item_id"]], [OTHER_ID])[1]]
@@ -200,7 +213,15 @@ async def adapt(train_path, art_dir):
     other["active"] = other["new_bad"] > other["new_good"]
     log(f"OTHER safety net: catches {other['new_bad']} more BAD and {other['new_good']} more GOOD -> "
         f"{'active' if other['active'] else 'disabled'}")
-    pred = save_artifacts(art, rows, rulebook, fallback, votes, started)
+    pred, _, _ = predictions(rows, votes, rulebook, fallback)
+    errors = [(r, pred[r["item_id"]]) for r in live_rows if pred[r["item_id"]] != r["label"]]
+    all_rules = global_rules + [r for t in live for r in rulebook["topics"][t]["rules"]]
+    try:
+        boundaries = await describe_boundaries(llm, all_rules, errors, votes) if errors else []
+    except LLMUnavailable as e:
+        boundaries = None
+        log(f"boundary summary skipped: {e}")
+    pred = save_artifacts(art, rows, rulebook, fallback, votes, started, llm, boundaries)
     log(f"adapt done: train macro accuracy {macro_accuracy(rows, pred):.3f}, {llm.calls} calls, "
         f"{llm.failed_calls} failed, {round(time.monotonic() - started)} s")
 
@@ -216,6 +237,8 @@ async def evaluate(test_path, art_dir, out_dir):
     fallback = {t: stored.get(t, "good") for t in TOPICS}
     pred = {r["item_id"]: fallback[r["topic"]] for r in rows}
     write_predictions(out, pred)
+    fallback_trace = [{"item_id": r["item_id"], "topic": r["topic"], "prediction": pred[r["item_id"]], "fired": [],
+                       "status": "fallback_no_model", "votes_bad": 0, "votes_total": 0, "votes": []} for r in rows]
     try:
         rulebook = json.loads((art / "rulebook.json").read_text(encoding="utf-8"))
         manifest = json.loads((art / "manifest.json").read_text(encoding="utf-8"))
@@ -223,6 +246,7 @@ async def evaluate(test_path, art_dir, out_dir):
         prompts = {t: (art / "prompts" / f"checker_{t}.txt").read_text(encoding="utf-8") for t in live}
     except (OSError, ValueError, KeyError) as e:
         log(f"artifacts unreadable, fallback labels kept: {e}")
+        write_trace(rows, fallback_trace, None, started)
         return
     for topic in live:
         if sha(prompts[topic]) != manifest["prompt_sha256"].get(topic):
@@ -231,18 +255,30 @@ async def evaluate(test_path, art_dir, out_dir):
         llm = LLM(deadline=started + config.EVAL_TIME_BUDGET_S * 0.9)
     except LLMUnavailable as e:
         log(f"no model access, fallback labels kept: {e}")
+        write_trace(rows, fallback_trace, None, started)
         return
     live_rows = [r for r in rows if r["topic"] in live]
     votes = await run_checks(llm, live_rows, prompts, {t: topic_rules(rulebook, t) for t in live}, rulebook["votes"])
-    pred, fired = predictions(rows, votes, rulebook, fallback)
+    pred, fired, detail = predictions(rows, votes, rulebook, fallback)
     write_predictions(out, pred)
-    if config.TRACE_FILE:  # dev only: votes and evidence per conversation, for error analysis
-        write_atomic(config.TRACE_FILE, "".join(json.dumps({"item_id": r["item_id"], "topic": r["topic"], "prediction": pred[r["item_id"]],
-                                                            "fired": fired[r["item_id"]], "votes": votes.get(r["item_id"], [])},
-                                                           ensure_ascii=False) + "\n" for r in rows))
+    write_trace(rows, [{"item_id": r["item_id"], "topic": r["topic"], "prediction": pred[r["item_id"]],
+                        "fired": fired[r["item_id"]], **detail[r["item_id"]], "votes": votes.get(r["item_id"], [])} for r in rows],
+                llm, started)
     judged = sum(1 for r in live_rows if votes[r["item_id"]])
     log(f"eval done: {judged}/{len(rows)} conversations judged by the model, {llm.failed_calls} failed calls, "
-        f"{round(time.monotonic() - started)} s")
+        f"{len(rows) - judged} kept fallback labels, {round(time.monotonic() - started)} s")
+
+
+def write_trace(rows, items, llm, started):
+    """Dev only: per-conversation trace plus run counters next to it, for error analysis and run logs."""
+    if not config.TRACE_FILE:
+        return
+    trace = Path(config.TRACE_FILE)
+    write_atomic(trace, "".join(json.dumps(i, ensure_ascii=False) + "\n" for i in items))
+    statuses = [i["status"] for i in items]
+    write_atomic(trace.with_name(trace.stem + "_stats.json"), json.dumps(
+        {"items": len(rows), "status": {s: statuses.count(s) for s in sorted(set(statuses))},
+         "llm": llm.stats() if llm else None, "seconds": round(time.monotonic() - started)}, indent=1))
 
 
 BASELINE_SCHEMA = {"type": "object", "properties": {"label": {"type": "string", "enum": ["good", "bad"]},
@@ -251,6 +287,7 @@ BASELINE_SCHEMA = {"type": "object", "properties": {"label": {"type": "string", 
 
 async def baseline(test_path, out_dir):
     """Same checker model, one plain request per conversation, no learned rules."""
+    started = time.monotonic()
     rows = load_dataset(test_path)
     llm = LLM()
     system = (PROMPTS / "baseline.md").read_text(encoding="utf-8")
@@ -258,6 +295,10 @@ async def baseline(test_path, out_dir):
     async def one(row):
         reply = await llm.json(config.CHECKER_MODEL, system, card(row), BASELINE_SCHEMA, 8192,
                                thinking_level=config.CHECKER_THINKING_LEVEL)
-        return row["item_id"], (reply or {}).get("label", "good")
+        label = (reply or {}).get("label")
+        return {"item_id": row["item_id"], "topic": row["topic"], "prediction": label or "good",
+                "status": "ok" if label else "fallback_no_votes", "reason": (reply or {}).get("reason", "")}
 
-    write_predictions(Path(out_dir) / "predictions.csv", dict(await asyncio.gather(*(one(r) for r in rows))))
+    items = await asyncio.gather(*(one(r) for r in rows))
+    write_predictions(Path(out_dir) / "predictions.csv", {i["item_id"]: i["prediction"] for i in items})
+    write_trace(rows, items, llm, started)

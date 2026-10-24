@@ -52,10 +52,21 @@ class LLM:
         self.failures_in_a_row = 0
         self.calls = 0
         self.failed_calls = 0
+        self.cache_hits = 0
         self.spent = 0.0
+        self.model_versions = {}  # requested model -> versions the API reported
         self.cache = Path(config.CACHE_DIR) if config.CACHE_DIR else None
         if self.cache:
             self.cache.mkdir(parents=True, exist_ok=True)
+
+    def stats(self):
+        """Call counters for run logs."""
+        return {"calls": self.calls, "failed_calls": self.failed_calls, "cache_hits": self.cache_hits,
+                "spent_usd": round(self.spent, 2), "model_versions": {m: sorted(v) for m, v in self.model_versions.items()}}
+
+    def _version(self, model, version):
+        if version:
+            self.model_versions.setdefault(model, set()).add(version)
 
     def _charge(self, model, tokens_in, tokens_out):
         price_in, price_out = PRICES.get(model, UNKNOWN_PRICE)
@@ -68,6 +79,7 @@ class LLM:
             max_output_tokens=max_output_tokens,
             thinking_config=types.ThinkingConfig(thinking_level=thinking_level) if thinking_level else None)
         response = await self.gemini.aio.models.generate_content(model=model, contents=user, config=cfg)
+        self._version(model, getattr(response, "model_version", None))
         usage = response.usage_metadata
         if usage:
             self._charge(model, usage.prompt_token_count or 0,
@@ -80,6 +92,7 @@ class LLM:
             model=model, messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
             response_format={"type": "json_schema", "json_schema": {"name": "reply", "schema": schema, "strict": False}},
             max_completion_tokens=max_output_tokens, **extra)
+        self._version(model, response.model)
         if response.usage:
             self._charge(model, response.usage.prompt_tokens, response.usage.completion_tokens)
         return json.loads(response.choices[0].message.content)
@@ -90,6 +103,7 @@ class LLM:
                                         ensure_ascii=False).encode()).hexdigest()
         cached = self.cache / f"{key}.json" if self.cache else None
         if cached and cached.exists():
+            self.cache_hits += 1
             return json.loads(cached.read_text(encoding="utf-8"))
         call = self._openai if is_openai(model) else self._gemini
         error = None

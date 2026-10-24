@@ -90,3 +90,9 @@ def decide(votes, active_rule_ids):
         if hits >= needed:
             fired.append(rid)
     return ("bad" if fired else "good"), fired
+
+
+def bad_votes(votes, active_rule_ids):
+    """How many single votes would label the conversation BAD on their own: a stability signal for the logs."""
+    return sum(1 for v in votes or [] if any(v.get(rid, {}).get("applies") and v.get(rid, {}).get("violated")
+                                             for rid in active_rule_ids))

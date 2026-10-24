@@ -6,8 +6,10 @@ from collections import defaultdict
 
 from . import check
 from .data import TOPICS
+from .rules import guidance_text
 
 MAX_EXAMPLES = 3
+MAX_ERRORS = 15
 
 
 def _norm(text):
@@ -30,7 +32,26 @@ def _short(text, limit=220):
     return text if len(text) <= limit else text[:limit] + "…"
 
 
-def render(rows, rulebook, fallback, audit, manifest):
+def _reply(row, limit=160):
+    """The last assistant message, shortened: what the expert judged."""
+    replies = [m["content"] for m in row["conversation"] if m["role"] == "assistant"]
+    return _short(replies[-1], limit) if replies else ""
+
+
+def _why(a, row):
+    """Evidence of the fired rules for a false BAD, the assistant's reply for a missed BAD."""
+    if a.get("status", "ok") != "ok":
+        return "fallback label: the model did not judge this conversation"
+    if not a["fired"]:
+        return f"no rule fired; reply: \"{_cell(_reply(row))}\""
+    parts = []
+    for rid in a["fired"]:
+        evidence = next((v[rid]["evidence"] for v in a["votes"] if v.get(rid, {}).get("violated") and v[rid]["evidence"]), "")
+        parts.append(f"{rid}: \"{_cell(_short(evidence, 120))}\"" if evidence else rid)
+    return "; ".join(parts)
+
+
+def render(rows, rulebook, fallback, audit, manifest, boundaries=None):
     by_id = {r["item_id"]: r for r in rows}
     audit_by_id = {a["item_id"]: a for a in audit}
     votes_n = rulebook.get("votes", 1)
@@ -64,14 +85,16 @@ def render(rows, rulebook, fallback, audit, manifest):
                          f"{_cell(r['exceptions'] or 'none')} | {s['tp']} | {s['fp']} | {'active' if r['active'] else 'disabled'} |")
         return lines + [""]
 
-    out += ["## 2. Rules", ""]
+    out += ["## 2. Rules", "",
+            "Training accuracy below is in-sample: the rules were induced and refined on these same conversations, "
+            "so it overestimates accuracy on new conversations.", ""]
     if rulebook["global"]["rules"]:
         out += ["### Global rules: checked in every topic", ""] + table(rulebook["global"]["rules"])
     for topic in TOPICS:
         entry = rulebook["topics"][topic]
         topic_rows = [r for r in rows if r["topic"] == topic]
         correct = sum(audit_by_id[r["item_id"]]["prediction"] == r["label"] for r in topic_rows)
-        out += [f"### {topic}: {correct}/{len(topic_rows)} training conversations reproduced", ""]
+        out += [f"### {topic}: {correct}/{len(topic_rows)} training conversations reproduced (in-sample)", ""]
         if entry["status"] != "llm":
             out += [f"No rules: every conversation gets the fallback label `{fallback[topic]}`.", ""]
             continue
@@ -111,9 +134,18 @@ def render(rows, rulebook, fallback, audit, manifest):
     out += ["## 4. Boundaries", ""]
     errors = [a for a in audit if a["prediction"] != a["label"]]
     out += [f"Training conversations the rules still misjudge: {len(errors)} of {len(audit)}.", ""]
+    for group in boundaries or []:
+        ids = [i for i in group["item_ids"] if i in by_id]
+        out.append(f"- **{group['kind'].replace('_', ' ')}**: {group['pattern']} "
+                   + ", ".join(f"`{i}` (expert: {by_id[i]['label']})" for i in ids))
+    if boundaries:
+        out.append("")
     if errors:
-        out += ["| Conversation | Topic | Expert | Judge | Fired rules |", "|---|---|---|---|---|"]
-        out += [f"| `{a['item_id']}` | {a['topic']} | {a['label']} | {a['prediction']} | {', '.join(a['fired']) or 'none'} |" for a in errors]
+        out += ["| Conversation | Topic | Expert | Judge | Why the judge disagrees |", "|---|---|---|---|---|"]
+        out += [f"| `{a['item_id']}` | {a['topic']} | {a['label']} | {a['prediction']} | {_why(a, by_id[a['item_id']])} |"
+                for a in errors[:MAX_ERRORS]]
+        if len(errors) > MAX_ERRORS:
+            out.append(f"\n{len(errors) - MAX_ERRORS} more are listed in `train_audit.jsonl`.")
         out.append("")
     split = [a["item_id"] for a in audit if len(a["votes"]) > 1 and
              len({tuple(sorted(rid for rid, c in v.items() if c["applies"] and c["violated"])) for v in a["votes"]}) > 1]
@@ -139,5 +171,18 @@ def render(rows, rulebook, fallback, audit, manifest):
             "- `eval` loads exactly these prompt files, checks their hashes, and labels with the `decide()` function below.",
             f"- Replay: the same `decide()` applied to the stored training votes in `train_audit.jsonl` reproduces "
             f"{sum(a['prediction'] == a['label'] for a in audit)}/{len(audit)} expert labels; per topic, see section 2.", "",
-            "```python", inspect.getsource(check.decide).rstrip(), "```", ""]
+            "```python", inspect.getsource(check.decide).rstrip(), "```", "",
+            "Hand-written guidance: written by the team, not induced from the data. It is added to the induce, refine "
+            "and checker prompts, so it is part of the prompts hashed above.", ""]
+    empty = []
+    for scope in ["all", *TOPICS]:
+        name = "all topics" if scope == "all" else scope
+        text = guidance_text(scope)
+        if text:
+            out += [f"Guidance for {name}, sha256 `{manifest.get('guidance_sha256', {}).get(scope, 'n/a')}`:",
+                    "", "```text", text, "```", ""]
+        else:
+            empty.append(name)
+    if empty:
+        out += [f"No guidance for: {', '.join(empty)}.", ""]
     return "\n".join(out)
