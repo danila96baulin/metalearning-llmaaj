@@ -94,7 +94,7 @@ def render(rows, rulebook, fallback, audit, manifest, boundaries=None):
             "so it overestimates accuracy on new conversations.", ""]
     budget = rulebook.get("rule_budget")
     if budget:
-        out += [f"Rule budget given to the inducer, growing with the square root of the training data: at most "
+        out += [f"Rule budget given to the inducer, growing with the number of training conversations: at most "
                 f"{budget['global']} global rules, and per topic " + ", ".join(f"{t} {n}" for t, n in budget["topics"].items()) + ".", ""]
     if rulebook["global"]["rules"]:
         out += ["### Global rules: checked in every topic", ""] + table(rulebook["global"]["rules"])

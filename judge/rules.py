@@ -1,6 +1,5 @@
 """Rule induction, consolidation into global and topic blocks, and refinement with the strong model."""
 import json
-import math
 import re
 from pathlib import Path
 
@@ -10,7 +9,7 @@ from .data import TOPICS, card
 PROMPTS = Path(__file__).parent / "prompts"
 PREFIX = {"all": "GL", "credit": "CR", "financial_position": "FP", "savings": "SV", "spending": "SP"}
 RULE_FIELDS = ("title", "applies_when", "violation_if", "how_to_check", "exceptions")
-MAX_RULES = 12  # hard caps against runaway output; the prompts ask for the smaller BUDGET
+MAX_RULES = 14  # hard caps against runaway output; the prompts ask for the smaller BUDGET
 MAX_GLOBAL_RULES = 10
 BUDGET = {"topics": {}, "global": 6}  # soft rule limits for the prompts, set from the training data by set_budget()
 MAX_ERRORS_SHOWN = 15
@@ -78,11 +77,11 @@ def guidance(scope):
 
 
 def set_budget(rows):
-    """Soft rule limits: 8 per topic up to about 40 training conversations and 6 global up to 150, as on the public
-    data; beyond that they grow with the square root of the data, so many more conversations add a few rules."""
-    BUDGET["topics"] = {t: min(MAX_RULES, max(8, round(8 * math.sqrt(sum(r["topic"] == t for r in rows) / 40))))
-                        for t in TOPICS}
-    BUDGET["global"] = min(MAX_GLOBAL_RULES, max(6, round(6 * math.sqrt(len(rows) / 150))))
+    """Soft rule limits: 8 per topic and 6 global on 150 training conversations (the public set), 11 and 8 on 190
+    (the private set), linear in between and beyond, within 8-12 per topic and 6-10 global."""
+    extra = (len(rows) - 150) / 40
+    BUDGET["topics"] = {t: min(12, max(8, round(8 + 3 * extra))) for t in TOPICS}
+    BUDGET["global"] = min(MAX_GLOBAL_RULES, max(6, round(6 + 2 * extra)))
     return {"global": BUDGET["global"], "topics": dict(BUDGET["topics"])}
 
 
