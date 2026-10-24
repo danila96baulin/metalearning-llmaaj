@@ -40,7 +40,10 @@ def main():
     run_id = f"{stamp}_{run.name}"
     commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
     expert = {r["item_id"]: r for r in load_dataset(ROOT / "data" / "public_test.csv")}
-    with (run / "output" / "predictions.csv").open(encoding="utf-8") as stream:
+    predictions = run / "output" / "predictions.csv"
+    if not predictions.exists():  # the baseline writes straight into the run folder
+        predictions = run / "predictions.csv"
+    with predictions.open(encoding="utf-8") as stream:
         test = [(r["item_id"], expert[r["item_id"]]["topic"], expert[r["item_id"]]["label"], r["label"]) for r in csv.DictReader(stream)]
     train = []
     audit = run / "artifacts" / "train_audit.jsonl"
