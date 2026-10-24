@@ -201,8 +201,12 @@ async def adapt(train_path, art_dir):
     log(f"OTHER safety net: catches {other['new_bad']} more BAD and {other['new_good']} more GOOD -> "
         f"{'active' if other['active'] else 'disabled'}")
     pred = save_artifacts(art, rows, rulebook, fallback, votes, started)
+    manifest_path = art / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(adapt_calls=llm.calls, adapt_spent_usd=round(llm.spent, 3))
+    write_atomic(manifest_path, json.dumps(manifest, indent=1))
     log(f"adapt done: train macro accuracy {macro_accuracy(rows, pred):.3f}, {llm.calls} calls, "
-        f"{llm.failed_calls} failed, {round(time.monotonic() - started)} s")
+        f"{llm.failed_calls} failed, ${llm.spent:.2f} estimated, {round(time.monotonic() - started)} s")
 
 
 async def evaluate(test_path, art_dir, out_dir):
@@ -242,7 +246,7 @@ async def evaluate(test_path, art_dir, out_dir):
                                                            ensure_ascii=False) + "\n" for r in rows))
     judged = sum(1 for r in live_rows if votes[r["item_id"]])
     log(f"eval done: {judged}/{len(rows)} conversations judged by the model, {llm.failed_calls} failed calls, "
-        f"{round(time.monotonic() - started)} s")
+        f"${llm.spent:.2f} estimated, {round(time.monotonic() - started)} s")
 
 
 BASELINE_SCHEMA = {"type": "object", "properties": {"label": {"type": "string", "enum": ["good", "bad"]},
