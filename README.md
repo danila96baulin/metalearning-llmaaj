@@ -2,7 +2,7 @@
 
 Our solution to the Plata challenge below. It is for teams who need an LLM judge that agrees with their domain expert and can show why.
 
-**What it does.** The expert labels conversations like a credit policy with stop factors: one violated rule makes a conversation `bad`. `adapt` recovers that policy from the labeled training conversations as an explicit rulebook. A strong model induces rules per topic from each `bad` conversation next to its most similar `good` one, a checker model audits them blind on the training set, and rules that flag as many `good` as `bad` conversations are disabled. `eval` checks every rule on every test conversation three times; code labels it `bad` if an active rule is violated in a majority of runs. `EXPLANATION.md` is rendered from the same rulebook and prompt files that `eval` uses.
+**What it does.** The expert labels conversations like a credit policy with stop factors: one violated rule makes a conversation `bad`. `adapt` recovers that policy from the labeled training conversations as an explicit rulebook. A strong model induces rules per topic from each `bad` conversation next to its most similar `good` one and merges the requirements shared by all topics into global rules. A checker model audits the rules blind on the training set. Refinement then revises a topic's rules, or adds an exception to a global rule that holds in that topic only, and is kept only if training accuracy rises and does not fall on a held-out half. Rules that flag as many `good` as `bad` conversations, and topic rules backed by fewer than two `bad` ones, are disabled. Code computes the arithmetic the checker needs from the context, such as sums, averages, interest and what is left to pay. `eval` checks every rule on every test conversation three times; code labels it `bad` if an active rule is violated in a majority of runs. `EXPLANATION.md` is rendered from the same rulebook and prompt files that `eval` uses.
 
 **Expertise inside.** All rules come from the expert's labels in the training file; none are written by hand. The decision logic follows the task's own semantics ("any violation of an applicable rule makes the conversation bad").
 
@@ -14,18 +14,19 @@ Our solution to the Plata challenge below. It is for teams who need an LLM judge
 |---|---|
 | Majority label per topic | 0.626 |
 | Same checker model (`gpt-6.1-sol`), one plain request, no learned rules | 0.625 |
-| This judge | 0.989 |
+| This judge, final run in Docker with a fresh `adapt` | 0.972 |
+| This judge, best development run | 0.989 |
 
 ### Run with Docker
 
 ```sh
-cp .env.example .env            # set GEMINI_API_KEY
+cp .env.example .env            # set GEMINI_API_KEY and OPENAI_API_KEY
 docker build --platform linux/amd64 -t expert-judge .
 docker run --rm --env-file .env -v "$PWD/in:/input" -v "$PWD/art:/artifacts" expert-judge adapt
 docker run --rm --env-file .env -v "$PWD/in:/input" -v "$PWD/art:/artifacts" -v "$PWD/out:/output" expert-judge eval
 ```
 
-`adapt` reads `/input/train.jsonl` and writes `/artifacts` (rulebook, prompts, training audit, `EXPLANATION.md`). `eval` reads `/input/test.jsonl` and `/artifacts` and writes `/output/predictions.csv`. Configuration is in [.env.example](.env.example). If the model API fails, both stages log a clear error, finish with exit code 0, and keep each topic's majority training label for unjudged conversations.
+`adapt` reads `/input/train.jsonl` and writes `/artifacts` (rulebook, prompts, training audit, `EXPLANATION.md`). `eval` reads `/input/test.jsonl` and `/artifacts` and writes `/output/predictions.csv`. Configuration is in [.env.example](.env.example). If the model API fails, both stages log a clear error, finish with exit code 0, and keep each topic's majority training label for unjudged conversations. Malformed input rows never stop a run: every `item_id` gets a label.
 
 ### Run locally
 
