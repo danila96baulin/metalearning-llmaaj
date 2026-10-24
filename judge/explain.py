@@ -73,8 +73,10 @@ def render(rows, rulebook, fallback, audit, manifest, boundaries=None):
             f"training accuracy: {'active' if rulebook['other']['active'] else 'disabled'}"
             + (f", it caught {rulebook['other']['new_bad']} more BAD and {rulebook['other']['new_good']} more GOOD "
                "training conversations than the rules alone." if 'new_bad' in rulebook['other'] else "."),
-            "5. Rules that flagged at least as many GOOD as BAD training conversations are disabled: "
-            "the checker still answers them, but they never decide the label.",
+            "5. A rule is disabled if it flagged at least as many GOOD as BAD training conversations, or if it is a topic rule "
+            f"that caught fewer than {rulebook.get('min_support', 1)} BAD training conversations: a rule built on a single "
+            "example is a hypothesis. A global rule that flagged no GOOD conversation stays active as common sense even "
+            "without a caught BAD. The checker still answers disabled rules, but they never decide the label.",
             "6. If a topic has no rules or the model API fails, the topic's majority training label is used: "
             + ", ".join(f"{t} = {fallback[t]}" for t in TOPICS) + ".", ""]
 
@@ -155,7 +157,7 @@ def render(rows, rulebook, fallback, audit, manifest, boundaries=None):
             + (f", for example {', '.join(f'`{i}`' for i in split[:8])}." if split else "."), ""]
     disabled = [(s, r) for s, scope_rules in scopes for r in scope_rules if not r["active"]]
     if disabled:
-        out += ["Disabled rules, because they flagged as many GOOD conversations as BAD:", ""]
+        out += ["Disabled rules (section 1, item 5):", ""]
         out += [f"- {r['id']} {r['title']}: caught {r['stats']['tp']} BAD, flagged {r['stats']['fp']} GOOD" for _, r in disabled]
         out.append("")
     groups = defaultdict(list)

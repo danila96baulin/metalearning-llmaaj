@@ -26,6 +26,7 @@ CHECKER_THINKING_LEVEL = os.getenv("CHECKER_THINKING_LEVEL", "")
 VOTES = int(os.getenv("VOTES", "3"))
 MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", "16"))
 REFINE_ROUNDS = int(os.getenv("REFINE_ROUNDS", "2"))
+MIN_SUPPORT = int(os.getenv("MIN_SUPPORT", "2"))  # caught BAD training conversations a topic rule needs to stay active
 ADAPT_TIME_BUDGET_S = int(os.getenv("ADAPT_TIME_BUDGET_S", "3000"))
 EVAL_TIME_BUDGET_S = int(os.getenv("EVAL_TIME_BUDGET_S", "1500"))
 CALL_TIMEOUT_S = int(os.getenv("LLM_CALL_TIMEOUT_S", "300"))

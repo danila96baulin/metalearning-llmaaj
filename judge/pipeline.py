@@ -200,11 +200,14 @@ async def adapt(train_path, art_dir):
     log(f"final audit with {config.VOTES} votes per conversation")
     votes = await run_checks(llm, live_rows, *current(), config.VOTES)
     scopes = [(global_rules, live_rows)] + [(rulebook["topics"][t]["rules"], [r for r in rows if r["topic"] == t]) for t in live]
-    for rules, scope_rows in scopes:
+    rulebook["min_support"] = config.MIN_SUPPORT
+    for scope, (rules, scope_rows) in zip(["all"] + live, scopes):
         stats = rule_stats(scope_rows, votes, rules)
         for rule in rules:
-            rule["stats"] = stats[rule["id"]]
-            rule["active"] = not (stats[rule["id"]]["fp"] >= stats[rule["id"]]["tp"] and stats[rule["id"]]["fp"] > 0)
+            s = rule["stats"] = stats[rule["id"]]
+            # A topic rule built on fewer than MIN_SUPPORT caught BAD is a hypothesis; a global rule that flags
+            # no GOOD stays active as common sense even without a caught BAD.
+            rule["active"] = not (s["fp"] >= s["tp"] and s["fp"] > 0) and (scope == "all" or s["tp"] >= config.MIN_SUPPORT)
     # OTHER stays on only if, among conversations the active rules pass as good, it catches more BAD than GOOD
     rules_pred, _, _ = predictions(rows, votes, rulebook, fallback)
     other = rulebook["other"]
