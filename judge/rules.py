@@ -1,5 +1,6 @@
 """Rule induction, consolidation into global and topic blocks, and refinement with the strong model."""
 import json
+import math
 import re
 from pathlib import Path
 
@@ -9,7 +10,9 @@ from .data import TOPICS, card
 PROMPTS = Path(__file__).parent / "prompts"
 PREFIX = {"all": "GL", "credit": "CR", "financial_position": "FP", "savings": "SV", "spending": "SP"}
 RULE_FIELDS = ("title", "applies_when", "violation_if", "how_to_check", "exceptions")
-MAX_RULES = 8
+MAX_RULES = 12  # hard caps against runaway output; the prompts ask for the smaller BUDGET
+MAX_GLOBAL_RULES = 10
+BUDGET = {"topics": {}, "global": 6}  # soft rule limits for the prompts, set from the training data by set_budget()
 MAX_ERRORS_SHOWN = 15
 
 RULE_PROPERTIES = {
@@ -31,6 +34,15 @@ RULES_SCHEMA = {
                                                          "required": RULE_REQUIRED}},
                    "notes": {"type": "string"}},
     "required": ["rules", "notes"],
+}
+REFINE_SCHEMA = {
+    "type": "object",
+    "properties": {**RULES_SCHEMA["properties"],
+                   "global_exceptions": {"type": "array", "items": {
+                       "type": "object",
+                       "properties": {"rule_id": {"type": "string"}, "exception": {"type": "string"}},
+                       "required": ["rule_id", "exception"]}}},
+    "required": ["rules", "global_exceptions", "notes"],
 }
 BOUNDARIES_SCHEMA = {
     "type": "object",
@@ -65,13 +77,24 @@ def guidance(scope):
     return f"<guidance>\n{text}\n</guidance>" if text else ""
 
 
+def set_budget(rows):
+    """Soft rule limits: 8 per topic up to about 40 training conversations and 6 global up to 150, as on the public
+    data; beyond that they grow with the square root of the data, so many more conversations add a few rules."""
+    BUDGET["topics"] = {t: min(MAX_RULES, max(8, round(8 * math.sqrt(sum(r["topic"] == t for r in rows) / 40))))
+                        for t in TOPICS}
+    BUDGET["global"] = min(MAX_GLOBAL_RULES, max(6, round(6 * math.sqrt(len(rows) / 150))))
+    return {"global": BUDGET["global"], "topics": dict(BUDGET["topics"])}
+
+
 def prompt(name, topic="all"):
     """Prompt template with the topic and the guidance filled in."""
     text = (PROMPTS / f"{name}.md").read_text(encoding="utf-8")
     topic_part = guidance(topic) if topic != "all" else ""
     candidates = (PROMPTS / "candidates.md").read_text(encoding="utf-8").strip()
     return (text.replace("{topic}", topic).replace("{global_guidance}", guidance("all"))
-            .replace("{topic_guidance}", topic_part).replace("{candidate_requirements}", candidates).strip())
+            .replace("{topic_guidance}", topic_part).replace("{candidate_requirements}", candidates)
+            .replace("{max_rules}", str(BUDGET["topics"].get(topic) or max(BUDGET["topics"].values(), default=8)))
+            .replace("{max_global_rules}", str(BUDGET["global"])).strip())
 
 
 def normalize(scope, raw_rules, ids, keep_ids=(), limit=MAX_RULES):
@@ -90,6 +113,12 @@ def normalize(scope, raw_rules, ids, keep_ids=(), limit=MAX_RULES):
                     examples=[e for e in raw.get("examples", []) if e.get("item_id") in ids][:5])
         rules.append(rule)
     return rules
+
+
+def with_exceptions(global_rules, exceptions):
+    """Global rules as one topic sees them: the topic's own exception appended to a rule's exceptions."""
+    return [{**r, "exceptions": f"{r['exceptions']} In this topic: {exceptions[r['id']]}".strip()}
+            if exceptions.get(r["id"]) else r for r in global_rules]
 
 
 def public(rule):
@@ -130,13 +159,15 @@ async def consolidate(llm, topic_rules, ids):
     by_topic = {t: normalize(t, scoped[t], ids) for t in topic_rules}
     if not any(by_topic.values()) and not scoped["all"]:
         return None
-    return normalize("all", scoped["all"], ids, limit=6), by_topic
+    return normalize("all", scoped["all"], ids, limit=MAX_GLOBAL_RULES), by_topic
 
 
-async def refine_topic(llm, topic, global_rules, rules, stats, missed, flagged, votes):
-    """Ask the strong model for a revised topic block given the checker's errors on part of the training data."""
+async def refine_topic(llm, topic, global_rules, rules, stats, missed, flagged, votes, exceptions):
+    """Ask the strong model for a revised topic block, and this topic's exceptions to global rules,
+    given the checker's errors on part of the training data. Returns (rules, exceptions) or None."""
     shown = [{**public(r), "caught_bad": stats[r["id"]]["tp"], "flagged_good": stats[r["id"]]["fp"]} for r in rules]
-    parts = [f"<global_rules read_only=\"true\">\n{json.dumps([public(r) for r in global_rules], ensure_ascii=False, indent=1)}\n</global_rules>",
+    seen_globals = [public(r) for r in with_exceptions(global_rules, exceptions)]
+    parts = [f"<global_rules>\n{json.dumps(seen_globals, ensure_ascii=False, indent=1)}\n</global_rules>",
              f"<topic_rules>\n{json.dumps(shown, ensure_ascii=False, indent=1)}\n</topic_rules>"]
     parts += [f"<missed expert=\"bad\" checker=\"good\" item_id=\"{r['item_id']}\">\n{card(r)}\n</missed>"
               for r in missed[:MAX_ERRORS_SHOWN]]
@@ -145,13 +176,17 @@ async def refine_topic(llm, topic, global_rules, rules, stats, missed, flagged, 
                  if c.get("applies") and c.get("violated")}
         parts.append(f"<wrongly_flagged expert=\"good\" checker=\"bad\" item_id=\"{r['item_id']}\">\n"
                      f"checker flags: {json.dumps(fired, ensure_ascii=False)}\n{card(r)}\n</wrongly_flagged>")
-    parts.append(f"Based on the errors above, return the complete revised topic rules for \"{topic}\".")
-    reply = await llm.json(config.INDUCER_MODEL, prompt("refine", topic), "\n\n".join(parts), RULES_SCHEMA, 32768,
+    parts.append(f"Based on the errors above, return the complete revised topic rules for \"{topic}\" "
+                 "and the complete list of this topic's exceptions to global rules.")
+    reply = await llm.json(config.INDUCER_MODEL, prompt("refine", topic), "\n\n".join(parts), REFINE_SCHEMA, 32768,
                            thinking_level=config.INDUCER_THINKING_LEVEL)
     if not reply or not reply.get("rules"):
         return None
     ids = {e["item_id"] for r in rules for e in r["examples"]} | {r["item_id"] for r in missed + flagged}
-    return normalize(topic, reply["rules"], ids, keep_ids={r["id"] for r in rules})
+    global_ids = {r["id"] for r in global_rules}
+    new_exceptions = {e["rule_id"]: " ".join(e["exception"].split()) for e in reply.get("global_exceptions") or []
+                      if e.get("rule_id") in global_ids and e.get("exception", "").strip()}
+    return normalize(topic, reply["rules"], ids, keep_ids={r["id"] for r in rules}), new_exceptions
 
 
 async def describe_boundaries(llm, rules, errors, votes):

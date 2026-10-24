@@ -10,7 +10,7 @@ You receive rule sets that were induced separately for each topic. Many requirem
 - Do not drop any requirement, and do not invent new ones.
 - Keep rule text general: no names, amounts, dates or item ids.
 - When you merge rules, keep the narrowest "applies_when" that covers them; a merged rule must not flag anything its source rules accepted.
-- At most 6 rules with scope "all" and at most 8 rules per topic.
+- At most {max_global_rules} rules with scope "all" and at most {max_rules} rules per topic.
 </task>
 
 {global_guidance}

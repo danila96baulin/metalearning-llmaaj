@@ -92,6 +92,10 @@ def render(rows, rulebook, fallback, audit, manifest, boundaries=None):
     out += ["## 2. Rules", "",
             "Training accuracy below is in-sample: the rules were induced and refined on these same conversations, "
             "so it overestimates accuracy on new conversations.", ""]
+    budget = rulebook.get("rule_budget")
+    if budget:
+        out += [f"Rule budget given to the inducer, growing with the square root of the training data: at most "
+                f"{budget['global']} global rules, and per topic " + ", ".join(f"{t} {n}" for t, n in budget["topics"].items()) + ".", ""]
     if rulebook["global"]["rules"]:
         out += ["### Global rules: checked in every topic", ""] + table(rulebook["global"]["rules"])
     for topic in TOPICS:
@@ -103,6 +107,9 @@ def render(rows, rulebook, fallback, audit, manifest, boundaries=None):
             out += [f"No rules: every conversation gets the fallback label `{fallback[topic]}`.", ""]
             continue
         out += table(entry["rules"]) if entry["rules"] else ["Only the global rules apply.", ""]
+        if entry.get("global_exceptions"):
+            out += [f"Exceptions to global rules that hold in {topic} only, added by refinement:", ""]
+            out += [f"- **{rid}**: {_cell(text)}" for rid, text in entry["global_exceptions"].items()] + [""]
 
     out += ["## 3. Training examples for each rule", "",
             "Quotes are checked against the conversation text; ✓ marks a verbatim match. Labels are the expert's.", ""]

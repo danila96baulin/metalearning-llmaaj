@@ -13,7 +13,7 @@ from .check import OTHER_ID, bad_votes, checker_prompt, decide, run_checks
 from .data import TOPICS, card, load_dataset, majority_labels, nearest_good, write_atomic
 from .explain import render
 from .llm import LLM, LLMUnavailable
-from .rules import PROMPTS, consolidate, describe_boundaries, guidance_text, induce_topic, refine_topic
+from .rules import PROMPTS, consolidate, describe_boundaries, guidance_text, induce_topic, refine_topic, set_budget, with_exceptions
 
 
 def log(message):
@@ -39,11 +39,16 @@ def live_topics(rulebook):
 
 def topic_rules(rulebook, topic):
     """Global block followed by the topic block: everything the checker sees for this topic."""
-    return rulebook["global"]["rules"] + rulebook["topics"][topic]["rules"]
+    return global_rules_for(rulebook, topic) + rulebook["topics"][topic]["rules"]
+
+
+def global_rules_for(rulebook, topic):
+    """The global rules with this topic's exceptions, added by refinement."""
+    return with_exceptions(rulebook["global"]["rules"], rulebook["topics"][topic].get("global_exceptions", {}))
 
 
 def prompts_for(rulebook):
-    return {t: checker_prompt(t, rulebook["global"]["rules"], rulebook["topics"][t]["rules"]) for t in live_topics(rulebook)}
+    return {t: checker_prompt(t, global_rules_for(rulebook, t), rulebook["topics"][t]["rules"]) for t in live_topics(rulebook)}
 
 
 def rule_stats(rows, votes, rules):
@@ -123,7 +128,7 @@ async def adapt(train_path, art_dir):
     rows = load_dataset(train_path, require_labels=True)
     fallback = majority_labels(rows)
     write_atomic(art / "fallback.json", json.dumps(fallback))
-    rulebook = {"votes": config.VOTES, "global": {"rules": []},
+    rulebook = {"votes": config.VOTES, "rule_budget": set_budget(rows), "global": {"rules": []},
                 "other": {"id": OTHER_ID, "title": "Clear error no rule covers: data contradicting the context, "
                           "an unanswered question or an invented fact", "active": False},
                 "topics": {t: {"status": "fallback", "rules": []} for t in TOPICS}}
@@ -176,21 +181,26 @@ async def adapt(train_path, art_dir):
         errors = [r for r in rows_t if half[r["item_id"]] == shown and pred[r["item_id"]] != r["label"]]
         if not errors:
             return
-        candidate = await refine_topic(llm, topic, global_rules, rules, rule_stats(rows_t, votes, rules),
-                                       [r for r in errors if r["label"] == "bad"],
-                                       [r for r in errors if r["label"] == "good"], votes)
-        if not candidate:
+        refined = await refine_topic(llm, topic, global_rules, rules, rule_stats(rows_t, votes, rules),
+                                     [r for r in errors if r["label"] == "bad"],
+                                     [r for r in errors if r["label"] == "good"], votes,
+                                     rulebook["topics"][topic].get("global_exceptions", {}))
+        if not refined:
             return
-        cand_votes = await run_checks(llm, rows_t, {topic: checker_prompt(topic, global_rules, candidate)},
-                                      {topic: global_rules + candidate}, 1)
+        candidate, cand_exceptions = refined
+        cand_globals = with_exceptions(global_rules, cand_exceptions)
+        cand_votes = await run_checks(llm, rows_t, {topic: checker_prompt(topic, cand_globals, candidate)},
+                                      {topic: cand_globals + candidate}, 1)
         cand_ids = global_ids + [x["id"] for x in candidate]
         cand_pred = {r["item_id"]: decide(cand_votes[r["item_id"]], cand_ids)[0] or fallback[topic] for r in rows_t}
         unseen = [r for r in rows_t if half[r["item_id"]] != shown]
         before, after = accuracy(rows_t, pred), accuracy(rows_t, cand_pred)
         if accuracy(unseen, cand_pred) >= accuracy(unseen, pred) and after > before:
             rulebook["topics"][topic]["rules"] = candidate
+            rulebook["topics"][topic]["global_exceptions"] = cand_exceptions
             votes.update(cand_votes)
-            log(f"{topic}: refinement round {round_no} accepted, train accuracy {before:.3f} -> {after:.3f}")
+            log(f"{topic}: refinement round {round_no} accepted, train accuracy {before:.3f} -> {after:.3f}"
+                + (f", exceptions to {', '.join(cand_exceptions)}" if cand_exceptions else ""))
         else:
             log(f"{topic}: refinement round {round_no} rejected, train accuracy {before:.3f} -> {after:.3f}")
 

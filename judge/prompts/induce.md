@@ -15,7 +15,7 @@ All labeled training conversations of the topic "{topic}". Each <bad> conversati
 2. No GOOD conversation violates any rule. Use the GOOD conversations to learn what the expert accepts and write it into "exceptions".
 3. Rules are general policies: no specific names, amounts, dates or item ids inside the rule text.
 4. Each rule checks one thing and is decidable from CONTEXT and CONVERSATION alone. "how_to_check" names the exact context fields to compare.
-5. Prefer fewer, precise rules over many vague ones: at most 8. If a BAD example looks inconsistent with the others, still explain it and mention it in "notes".
+5. Prefer fewer, precise rules over many vague ones: at most {max_rules}. If a BAD example looks inconsistent with the others, still explain it and mention it in "notes".
 6. A BAD conversation can fail by omission: the customer asked something, CONTEXT had the answer, and the assistant did not give it. Tie such a rule to the question that went unanswered. Not adding detail the customer did not ask for, or giving a summary with a link to the full list, is not an omission.
 7. A checker model applies each rule literally, so write rules for it:
 - "applies_when": the narrow situation where the rule matters, such as the kind of customer request. A rule scoped too broadly gets applied where the expert does not care.
