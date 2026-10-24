@@ -295,7 +295,7 @@ async def baseline(test_path, out_dir):
     system = (PROMPTS / "baseline.md").read_text(encoding="utf-8")
 
     async def one(row):
-        reply = await llm.json(config.CHECKER_MODEL, system, card(row), BASELINE_SCHEMA, 8192,
+        reply = await llm.json(config.CHECKER_MODEL, system, card(row, calculator=False), BASELINE_SCHEMA, 8192,
                                thinking_level=config.CHECKER_THINKING_LEVEL)
         label = (reply or {}).get("label")
         return {"item_id": row["item_id"], "topic": row["topic"], "prediction": label or "good",

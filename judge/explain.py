@@ -62,6 +62,8 @@ def render(rows, rulebook, fallback, audit, manifest, boundaries=None):
 
     out += ["## 1. Decision procedure and priorities", "",
             "1. Each conversation is checked against the global stop rules and the stop rules of its topic, listed in section 2. "
+            "The checker also receives arithmetic computed in code from the context (sums, averages, interest, balances), "
+            "with every number in the assistant's replies matched to the closest computed value. "
             "For every rule the checker first decides whether the rule applies, then whether an assistant message violates it.",
             f"2. A rule fires when it applies and is violated in a strict majority of the {votes_n} checker runs.",
             "3. The conversation is BAD if at least one active rule of its topic fires; otherwise it is GOOD. "

@@ -11,11 +11,13 @@ from common import LABELS, TOPICS, load_dataset  # noqa: E402
 __all__ = ["LABELS", "TOPICS", "load_dataset", "card", "nearest_good", "write_atomic", "majority_labels"]
 
 
-def card(row):
-    """Topic, compact context JSON and numbered turns, in the original language."""
+def card(row, calculator=True):
+    """Topic, compact context JSON, numbered turns in the original language, and the calculator block."""
+    from .calc import calculator_block
     turns = "\n".join(f"[{i}] {m['role']}: {m['content']}" for i, m in enumerate(row["conversation"], 1))
     context = json.dumps(row["context"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return f"TOPIC: {row['topic']}\nCONTEXT: {context}\nCONVERSATION:\n{turns}"
+    text = f"TOPIC: {row['topic']}\nCONTEXT: {context}\nCONVERSATION:\n{turns}"
+    return f"{text}\n{calculator_block(row)}" if calculator else text
 
 
 def nearest_good(rows):

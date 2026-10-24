@@ -7,7 +7,7 @@ A conversation is BAD if the assistant violates at least one applicable expert r
 </label_semantics>
 
 <input>
-All labeled training conversations of the topic "{topic}". Each <bad> conversation is followed by the most similar <similar_good> one; the remaining <good> conversations come last.
+All labeled training conversations of the topic "{topic}". Each <bad> conversation is followed by the most similar <similar_good> one; the remaining <good> conversations come last. Each conversation ends with a <calculator> block: arithmetic computed by code from CONTEXT, with every number in the assistant's replies matched to the closest computed value. Use it to spot wrong figures.
 </input>
 
 <requirements>

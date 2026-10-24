@@ -9,4 +9,5 @@ Typical requirements for a banking support assistant. They are hypotheses, not r
 7. When the customer says they did not understand, re-explain the unclear part instead of moving on.
 8. Do not output service text: role labels, lines written for the customer, or unfilled placeholders.
 9. When the customer states something that CONTEXT contradicts, correct it with the data. Merely noting, recording or accepting the claim, or promising to check it, does not count as correcting it.
+10. When the customer reports an operation that CONTEXT does not show, such as a payment or a transfer made a moment ago, do not confirm it or recalculate balances as if it went through; say what the data shows and that the operation may take time to appear.
 </candidate_requirements>
