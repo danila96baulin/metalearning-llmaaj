@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import config
 from .check import OTHER_ID, bad_votes, checker_prompt, decide, run_checks
-from .data import TOPICS, card, load_dataset, majority_labels, nearest_good, write_atomic
+from .data import TOPICS, card, load_rows, majority_labels, nearest_good, write_atomic
 from .explain import render
 from .llm import LLM, LLMUnavailable
 from .rules import PROMPTS, consolidate, describe_boundaries, guidance_text, induce_topic, refine_topic, set_budget, with_exceptions
@@ -78,7 +78,7 @@ def predictions(rows, votes, rulebook, fallback):
             label, fired[row["item_id"]] = decide(item_votes, active)
             split = bad_votes(item_votes, active)
         status = "ok" if label else "fallback_topic" if row["topic"] not in live else "fallback_no_votes"
-        pred[row["item_id"]] = label or fallback[row["topic"]]
+        pred[row["item_id"]] = label or fallback.get(row["topic"], "good")
         detail[row["item_id"]] = {"status": status, "votes_bad": split, "votes_total": len(item_votes)}
     return pred, fired, detail
 
@@ -125,7 +125,7 @@ def save_artifacts(art, rows, rulebook, fallback, votes, started, llm=None, boun
 async def adapt(train_path, art_dir):
     started = time.monotonic()
     art = Path(art_dir)
-    rows = load_dataset(train_path, require_labels=True)
+    rows = load_rows(train_path, require_labels=True)
     fallback = majority_labels(rows)
     write_atomic(art / "fallback.json", json.dumps(fallback))
     rulebook = {"votes": config.VOTES, "rule_budget": set_budget(rows), "global": {"rules": []},
@@ -244,13 +244,13 @@ async def adapt(train_path, art_dir):
 async def evaluate(test_path, art_dir, out_dir):
     started = time.monotonic()
     art, out = Path(art_dir), Path(out_dir) / "predictions.csv"
-    rows = load_dataset(test_path)
+    rows = load_rows(test_path)
     try:
         stored = json.loads((art / "fallback.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         stored = {}
     fallback = {t: stored.get(t, "good") for t in TOPICS}
-    pred = {r["item_id"]: fallback[r["topic"]] for r in rows}
+    pred = {r["item_id"]: fallback.get(r["topic"], "good") for r in rows}
     write_predictions(out, pred)
     fallback_trace = [{"item_id": r["item_id"], "topic": r["topic"], "prediction": pred[r["item_id"]], "fired": [],
                        "status": "fallback_no_model", "votes_bad": 0, "votes_total": 0, "votes": []} for r in rows]
@@ -303,7 +303,7 @@ BASELINE_SCHEMA = {"type": "object", "properties": {"label": {"type": "string", 
 async def baseline(test_path, out_dir):
     """Same checker model, one plain request per conversation, no learned rules."""
     started = time.monotonic()
-    rows = load_dataset(test_path)
+    rows = load_rows(test_path)
     llm = LLM()
     system = (PROMPTS / "baseline.md").read_text(encoding="utf-8")
 

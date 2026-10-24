@@ -1,4 +1,6 @@
 """Loading examples, rendering them as compact case cards, finding contrast pairs."""
+import csv
+import io
 import json
 import os
 import sys
@@ -8,7 +10,56 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from common import LABELS, TOPICS, load_dataset  # noqa: E402
 
-__all__ = ["LABELS", "TOPICS", "load_dataset", "card", "nearest_good", "write_atomic", "majority_labels"]
+__all__ = ["LABELS", "TOPICS", "load_dataset", "load_rows", "card", "nearest_good", "write_atomic", "majority_labels"]
+
+
+def load_rows(path, require_labels=False):
+    """The organizers' strict loader when the file passes it; otherwise row by row, so that one malformed row never
+    stops a run. Every row with an item_id is kept for eval, which labels what it cannot judge with the fallback;
+    adapt learns only from rows with a known topic, a label and at least one message."""
+    try:
+        return load_dataset(path, require_labels=require_labels)
+    except Exception as e:  # any validation error: fall back to reading row by row
+        print(f"[judge] input fails the strict check ({e}); reading it row by row", file=sys.stderr)
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    if str(path).endswith(".csv"):
+        csv.field_size_limit(sys.maxsize)
+        records = list(csv.DictReader(io.StringIO(text)))
+    else:
+        records = []
+        for line in text.splitlines():
+            try:
+                records.append(json.loads(line))
+            except ValueError:
+                continue
+    rows, seen = [], set()
+    for raw in records:
+        item_id = str(raw.get("item_id") or "").strip() if isinstance(raw, dict) else ""
+        if not item_id or item_id in seen:
+            continue
+        context, conversation = _parsed(raw.get("context")), _parsed(raw.get("conversation"))
+        messages = [{"role": str(m.get("role") or ""), "content": str(m.get("content") or "")}
+                    for m in (conversation if isinstance(conversation, list) else []) if isinstance(m, dict)]
+        row = {"item_id": item_id, "topic": raw.get("topic") if raw.get("topic") in TOPICS else None,
+               "context": context if isinstance(context, dict) else {},
+               "conversation": [m for m in messages if m["content"].strip()]}
+        if raw.get("label") in LABELS:
+            row["label"] = raw["label"]
+        if require_labels and not (row["topic"] and row.get("label") and row["conversation"]):
+            continue
+        seen.add(item_id)
+        rows.append(row)
+    return rows
+
+
+def _parsed(value):
+    """A JSON field that may arrive as a string; None if it does not parse."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return None
+    return value
 
 
 def card(row, calculator=True):
