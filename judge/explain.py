@@ -14,11 +14,11 @@ def _norm(text):
     return re.sub(r"\s+", " ", text).strip().strip("\"'«»“”").lower()
 
 
-def verified(quote, row):
-    """True if the quote is a verbatim (whitespace-normalized) part of an assistant message."""
-    q = _norm(quote)
+def verified(evidence, row):
+    """True if the evidence, or a quoted span inside it, is a verbatim (whitespace-normalized) part of an assistant message."""
     text = _norm(" ".join(m["content"] for m in row["conversation"] if m["role"] == "assistant"))
-    return len(q) >= 8 and q in text
+    spans = [evidence] + re.findall(r"[«“\"]([^»”\"]{8,})[»”\"]", evidence)
+    return any(len(_norm(s)) >= 8 and _norm(s).rstrip(".…") in text for s in spans)
 
 
 def _cell(text):

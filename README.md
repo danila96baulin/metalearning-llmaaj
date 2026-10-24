@@ -6,9 +6,15 @@ Our solution to the Plata challenge below. It is for teams who need an LLM judge
 
 **Expertise inside.** All rules come from the expert's labels in the training file; none are written by hand. The decision logic follows the task's own semantics ("any violation of an applicable rule makes the conversation bad").
 
-**Models.** Inducer `gemini-4-argon`, checker `gemini-3.8-flash` by default, both through the [Gemini API](https://ai.google.dev/gemini-api/terms); any Gemini model can be set via environment variables.
+**Models.** Inducer `gemini-4-argon` through the [Gemini API](https://ai.google.dev/gemini-api/terms) and checker `gpt-6.1-sol` through the [OpenAI API](https://openai.com/policies/services-agreement); both keys are needed (`GEMINI_API_KEY`, `OPENAI_API_KEY`).
 
-**Results on the public data.** TBD: baseline (same checker, one plain request, no rules) vs. this judge, `macro_topic_accuracy` on `public_test`.
+**Results on the public data** (`macro_topic_accuracy` on `public_test`, adapt on `public_train`):
+
+| Judge | Accuracy |
+|---|---|
+| Majority label per topic | 0.626 |
+| Same checker model (`gpt-6.1-sol`), one plain request, no learned rules | 0.625 |
+| This judge | 0.989 |
 
 ### Run with Docker
 

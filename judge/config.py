@@ -19,7 +19,7 @@ load_dotenv()
 
 PROVIDER = os.getenv("LLM_PROVIDER", "gemini")  # gemini: GEMINI_API_KEY; vertex: gcloud ADC
 INDUCER_MODEL = os.getenv("INDUCER_MODEL", "gemini-4-argon")
-CHECKER_MODEL = os.getenv("CHECKER_MODEL", "gemini-3.8-flash")
+CHECKER_MODEL = os.getenv("CHECKER_MODEL", "gpt-6.1-sol")
 # Gemini 3.x/4 thinking depth: empty = model default; e.g. low, medium, high (minimal only on Flash-Lite)
 INDUCER_THINKING_LEVEL = os.getenv("INDUCER_THINKING_LEVEL", "")
 CHECKER_THINKING_LEVEL = os.getenv("CHECKER_THINKING_LEVEL", "")
@@ -30,7 +30,7 @@ ADAPT_TIME_BUDGET_S = int(os.getenv("ADAPT_TIME_BUDGET_S", "3000"))
 EVAL_TIME_BUDGET_S = int(os.getenv("EVAL_TIME_BUDGET_S", "1500"))
 CALL_TIMEOUT_S = int(os.getenv("LLM_CALL_TIMEOUT_S", "300"))
 # Hard cap on estimated model spend per adapt or eval run; past it, the remaining items keep fallback labels
-SPEND_LIMIT_USD = float(os.getenv("SPEND_LIMIT_USD", "15"))
+SPEND_LIMIT_USD = float(os.getenv("SPEND_LIMIT_USD", "40"))
 MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "5"))
 CACHE_DIR = os.getenv("LLM_CACHE_DIR", "")  # dev only: reuse identical calls across runs
 # Dev only: eval also writes per-conversation votes and evidence to this file
