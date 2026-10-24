@@ -1,4 +1,37 @@
-# A Judge That Learns from an Expert
+# Expert judge: stop rules learned from an expert
+
+Our solution to the Plata challenge below. It is for teams who need an LLM judge that agrees with their domain expert and can show why.
+
+**What it does.** The expert labels conversations like a credit policy with stop factors: one violated rule makes a conversation `bad`. `adapt` recovers that policy from the labeled training conversations as an explicit rulebook. A strong model induces rules per topic from each `bad` conversation next to its most similar `good` one, a checker model audits them blind on the training set, and rules that flag as many `good` as `bad` conversations are disabled. `eval` checks every rule on every test conversation three times; code labels it `bad` if an active rule is violated in a majority of runs. `EXPLANATION.md` is rendered from the same rulebook and prompt files that `eval` uses.
+
+**Expertise inside.** All rules come from the expert's labels in the training file; none are written by hand. The decision logic follows the task's own semantics ("any violation of an applicable rule makes the conversation bad").
+
+**Models.** Inducer `gemini-4-argon`, checker `gemini-3.8-flash` by default, both through the [Gemini API](https://ai.google.dev/gemini-api/terms); any Gemini model can be set via environment variables.
+
+**Results on the public data.** TBD: baseline (same checker, one plain request, no rules) vs. this judge, `macro_topic_accuracy` on `public_test`.
+
+### Run with Docker
+
+```sh
+cp .env.example .env            # set GEMINI_API_KEY
+docker build --platform linux/amd64 -t expert-judge .
+docker run --rm --env-file .env -v "$PWD/in:/input" -v "$PWD/art:/artifacts" expert-judge adapt
+docker run --rm --env-file .env -v "$PWD/in:/input" -v "$PWD/art:/artifacts" -v "$PWD/out:/output" expert-judge eval
+```
+
+`adapt` reads `/input/train.jsonl` and writes `/artifacts` (rulebook, prompts, training audit, `EXPLANATION.md`). `eval` reads `/input/test.jsonl` and `/artifacts` and writes `/output/predictions.csv`. Configuration is in [.env.example](.env.example). If the model API fails, both stages log a clear error, finish with exit code 0, and keep each topic's majority training label for unjudged conversations.
+
+### Run locally
+
+```sh
+pip install -r requirements.txt
+scripts/run_public.sh           # prepare inputs, adapt, eval, score into out/public
+python -m judge baseline --test out/public/input/test.jsonl --output out/baseline
+```
+
+---
+
+# A Judge That Learns from an Expert (task)
 
 Infer an expert's evaluation rules from labeled conversations, then assign one of two labels to new conversations: `good` or `bad`. Evaluate the entire conversation. Any violation of an applicable rule makes the conversation `bad`.
 
