@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from . import config
-from .check import OTHER_ID, bad_votes, checker_prompt, decide, run_checks
+from .check import OTHER_ID, bad_votes, checker_prompt, decide, run_checks, set_examples
 from .data import TOPICS, card, load_rows, majority_labels, nearest_good, write_atomic
 from .explain import render
 from .llm import LLM, LLMUnavailable
@@ -128,6 +128,9 @@ async def adapt(train_path, art_dir):
     rows = load_rows(train_path, require_labels=True)
     fallback = majority_labels(rows)
     write_atomic(art / "fallback.json", json.dumps(fallback))
+    examples = [{"item_id": r["item_id"], "topic": r["topic"], "label": r["label"], "text": card(r, calculator=False)} for r in rows]
+    write_atomic(art / "examples.jsonl", "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in examples))
+    set_examples(examples)
     rulebook = {"votes": config.VOTES, "rule_budget": set_budget(rows), "global": {"rules": []},
                 "other": {"id": OTHER_ID, "title": "Clear error no rule covers: data contradicting the context, "
                           "an unanswered question or an invented fact", "active": False},
@@ -263,6 +266,10 @@ async def evaluate(test_path, art_dir, out_dir):
         log(f"artifacts unreadable, fallback labels kept: {e}")
         write_trace(rows, fallback_trace, None, started)
         return
+    try:
+        set_examples([json.loads(line) for line in (art / "examples.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()])
+    except (OSError, ValueError) as e:
+        log(f"no training examples for the checker: {e}")
     for topic in live:
         if sha(prompts[topic]) != manifest["prompt_sha256"].get(topic):
             log(f"WARNING: prompt for {topic} differs from the hash recorded by adapt")

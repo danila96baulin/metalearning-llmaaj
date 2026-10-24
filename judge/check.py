@@ -7,6 +7,34 @@ from .data import card
 from .llm import LLMUnavailable
 from .rules import prompt
 
+EXAMPLES = {}  # topic -> (vectorizer, matrix, records): labeled training conversations shown to the checker
+
+
+def set_examples(records):
+    """Index labeled training conversations (item_id, topic, label, text) per topic for nearest-example lookup."""
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    EXAMPLES.clear()
+    for topic in {r["topic"] for r in records}:
+        recs = [r for r in records if r["topic"] == topic]
+        vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5)).fit([r["text"] for r in recs])
+        EXAMPLES[topic] = (vectorizer, vectorizer.transform([r["text"] for r in recs]), recs)
+
+
+def examples_block(row, per_label=2):
+    """The most similar BAD and GOOD training conversations of the row's topic, never the row itself."""
+    entry = EXAMPLES.get(row["topic"])
+    if not entry:
+        return ""
+    from sklearn.metrics.pairwise import cosine_similarity
+    vectorizer, matrix, recs = entry
+    similarity = cosine_similarity(vectorizer.transform([card(row, calculator=False)]), matrix)[0]
+    order = sorted(range(len(recs)), key=lambda i: -similarity[i])
+    chosen = []
+    for label in ("bad", "good"):
+        chosen += [recs[i] for i in order if recs[i]["label"] == label and recs[i]["item_id"] != row["item_id"]][:per_label]
+    parts = [f'<example expert="{r["label"]}">\n{r["text"]}\n</example>' for r in chosen]
+    return "<examples>\n" + "\n\n".join(parts) + "\n</examples>\n\n" if parts else ""
+
 
 def render_rule(rule):
     text = (f"[{rule['id']}] {rule['title']}\n"
@@ -55,7 +83,8 @@ async def run_checks(llm, rows, prompts, rules_by_topic, votes):
         if not rules:
             return row["item_id"], None
         ids = [r["id"] for r in rules]
-        user = f"{card(row)}\n\nCheck the conversation above against every rule."
+        user = (f"{examples_block(row)}<conversation>\n{card(row)}\n</conversation>\n\n"
+                "Check the conversation in <conversation> against every rule.")
         reply = await llm.json(config.CHECKER_MODEL, prompts[row["topic"]], user, checker_schema(ids), 8192, sample,
                                thinking_level=config.CHECKER_THINKING_LEVEL)
         if not reply:
