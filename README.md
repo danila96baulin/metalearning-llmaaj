@@ -14,8 +14,7 @@ Our solution to the Plata challenge below. It is for teams who need an LLM judge
 |---|---|
 | Majority label per topic | 0.626 |
 | Same checker model (`gpt-6.1-sol`), one plain request, no learned rules | 0.625 |
-| This judge, final run in Docker with a fresh `adapt` | 0.972 |
-| This judge, best development run | 0.989 |
+| This judge, two fresh runs in Docker (`adapt` from scratch each time) | 0.972 and 0.989 |
 
 ### Run with Docker
 
