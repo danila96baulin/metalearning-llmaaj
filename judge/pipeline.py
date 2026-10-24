@@ -167,10 +167,7 @@ async def adapt(train_path, art_dir):
     def current():
         return prompts_for(rulebook), {t: topic_rules(rulebook, t) for t in live}
 
-    # Refinement sees the same majority of VOTES runs that decides the final label, so it fixes the errors the final
-    # rulebook makes. Accepted candidates are audited the same way, so these votes are the final audit.
-    log(f"audit with {config.VOTES} votes per conversation")
-    votes = await run_checks(llm, live_rows, *current(), config.VOTES)
+    votes = await run_checks(llm, live_rows, *current(), 1)
     save_artifacts(art, rows, rulebook, fallback, votes, started, llm)
     half = {r["item_id"]: int(sha(r["item_id"]), 16) % 2 for r in rows}
     global_rules = rulebook["global"]["rules"]
@@ -193,7 +190,7 @@ async def adapt(train_path, art_dir):
         candidate, cand_exceptions = refined
         cand_globals = with_exceptions(global_rules, cand_exceptions)
         cand_votes = await run_checks(llm, rows_t, {topic: checker_prompt(topic, cand_globals, candidate)},
-                                      {topic: cand_globals + candidate}, config.VOTES)
+                                      {topic: cand_globals + candidate}, 1)
         cand_ids = global_ids + [x["id"] for x in candidate]
         cand_pred = {r["item_id"]: decide(cand_votes[r["item_id"]], cand_ids)[0] or fallback[topic] for r in rows_t}
         unseen = [r for r in rows_t if half[r["item_id"]] != shown]
@@ -210,6 +207,8 @@ async def adapt(train_path, art_dir):
     for round_no in range(config.REFINE_ROUNDS):
         await asyncio.gather(*(refine_one(t, round_no % 2, round_no + 1) for t in live), return_exceptions=True)
 
+    log(f"final audit with {config.VOTES} votes per conversation")
+    votes = await run_checks(llm, live_rows, *current(), config.VOTES)
     scopes = [(global_rules, live_rows)] + [(rulebook["topics"][t]["rules"], [r for r in rows if r["topic"] == t]) for t in live]
     rulebook["min_support"] = config.MIN_SUPPORT
     for scope, (rules, scope_rows) in zip(["all"] + live, scopes):
