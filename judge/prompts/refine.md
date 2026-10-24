@@ -11,6 +11,7 @@ A checker applied the global rules and the topic rules to labeled training conve
 - The global rules are read-only; change only the topic rules.
 - Allowed changes: narrow or clarify a rule, add an exception, add a missing rule, remove a rule that only causes false flags.
 - Keep rules general: no names, amounts, dates or item ids. At most 12 topic rules.
+- A missed BAD conversation often fails by omission: the assistant did not give required information, did not correct the customer, did not use data it had. If so, phrase the violation as what the assistant should have done.
 - Return the complete revised topic rules. Keep the id of every rule you keep or edit; give new rules an id that is not in use.
 </task>
 

@@ -16,6 +16,7 @@ All labeled training conversations of the topic "{topic}". Each <bad> conversati
 3. Rules are general policies: no specific names, amounts, dates or item ids inside the rule text.
 4. Each rule checks one thing and is decidable from CONTEXT and CONVERSATION alone. "how_to_check" names the exact context fields to compare.
 5. Prefer fewer, precise rules over many vague ones: at most 12. If a BAD example looks inconsistent with the others, still explain it and mention it in "notes".
+6. State what the assistant should have done, not only what it did wrong. A BAD conversation can fail by omission: the assistant did not give required information, did not correct the customer, did not use data it had. Write "violation_if" so that it also catches such failures, not just a literally wrong statement.
 </requirements>
 
 {global_guidance}

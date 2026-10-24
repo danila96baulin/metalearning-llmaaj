@@ -8,4 +8,5 @@ Typical requirements for a banking support assistant. They are hypotheses, not r
 6. Do not offer a handover to a human agent the customer did not ask for.
 7. When the customer says they did not understand, re-explain the unclear part instead of moving on.
 8. Do not output service text: role labels, lines written for the customer, or unfilled placeholders.
+9. When the customer states something that CONTEXT contradicts, correct it with the data. Merely noting, recording or accepting the claim, or promising to check it, does not count as correcting it.
 </candidate_requirements>
