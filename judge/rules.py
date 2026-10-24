@@ -9,7 +9,7 @@ from .data import TOPICS, card
 PROMPTS = Path(__file__).parent / "prompts"
 PREFIX = {"all": "GL", "credit": "CR", "financial_position": "FP", "savings": "SV", "spending": "SP"}
 RULE_FIELDS = ("title", "applies_when", "violation_if", "how_to_check", "exceptions")
-MAX_RULES = 12
+MAX_RULES = 8
 MAX_ERRORS_SHOWN = 15
 
 RULE_PROPERTIES = {
@@ -130,7 +130,7 @@ async def consolidate(llm, topic_rules, ids):
     by_topic = {t: normalize(t, scoped[t], ids) for t in topic_rules}
     if not any(by_topic.values()) and not scoped["all"]:
         return None
-    return normalize("all", scoped["all"], ids, limit=10), by_topic
+    return normalize("all", scoped["all"], ids, limit=6), by_topic
 
 
 async def refine_topic(llm, topic, global_rules, rules, stats, missed, flagged, votes):

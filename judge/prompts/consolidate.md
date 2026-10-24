@@ -9,7 +9,8 @@ You receive rule sets that were induced separately for each topic. Many requirem
 - Rules about what the assistant must never do in any conversation, such as promising or simulating actions it cannot perform in chat, usually hold in every topic: give them scope "all" even if they were induced in one topic, unless that topic's wording makes them topic-specific.
 - Do not drop any requirement, and do not invent new ones.
 - Keep rule text general: no names, amounts, dates or item ids.
-- At most 10 rules with scope "all" and at most 10 rules per topic.
+- When you merge rules, keep the narrowest "applies_when" that covers them; a merged rule must not flag anything its source rules accepted.
+- At most 6 rules with scope "all" and at most 8 rules per topic.
 </task>
 
 {global_guidance}
