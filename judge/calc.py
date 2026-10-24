@@ -27,6 +27,20 @@ def parse_number(token):
     return float(re.sub(r"[,.]", "", token[:last]) + "." + token[last + 1:])
 
 
+def num(value):
+    """A context value as a float: numbers and numeric strings such as "1,750.00"; anything else is 0."""
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and NUMBER.fullmatch(value.strip()):
+        try:
+            return parse_number(value.strip())
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
 def fmt(value):
     return f"{value:,.2f}"
 
@@ -54,7 +68,7 @@ def _tables(value, path="context"):
 
 
 def _numeric(rows):
-    keys = {k for r in rows for k, v in r.items() if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    keys = {k for r in rows for k, v in r.items() if num(v)}
     return sorted(keys)
 
 
@@ -99,12 +113,12 @@ def references(row):
                 if not m:
                     continue
                 for k in keys:
-                    by_month[m][k] += abs(r.get(k) or 0)
+                    by_month[m][k] += abs(num(r.get(k)))
                 counts[m] += 1
                 if amount:  # transaction-like rows: sums by month and by category, merchant, type
                     for field in ("category", "merchant", "type", "status"):
                         if r.get(field):
-                            by_month[m][f"{field}={r[field]}"] += abs(r[amount])
+                            by_month[m][f"{field}={r[field]}"] += abs(num(r.get(amount)))
                             by_month[m][f"count {field}={r[field]}"] += 1
             metrics = {}
             for m, values in by_month.items():
@@ -137,7 +151,7 @@ def references(row):
                     totals = defaultdict(float)
                     for r in rows:
                         if r.get(field):
-                            totals[r[field]] += abs(r[amount])
+                            totals[r[field]] += abs(num(r.get(amount)))
                     for value, total in totals.items():
                         add(total, f"{name}: total {field}={value}")
                         if len(months) > 1:
@@ -147,14 +161,15 @@ def references(row):
         hold = _key(keys, "hold") or _key(keys, "held")
         if balance:
             for r in rows:
-                b = r.get(balance) or 0
-                label = r.get("product") or r.get("name") or "account"
-                balances.append((label, b, b - (r.get(hold) or 0) if hold else b))
+                b = num(r.get(balance))
+                label = str(r.get("product") or r.get("name") or "account")
+                balances.append((label, b, b - num(r.get(hold)) if hold else b))
         for r in rows:
             for k in keys:
-                if "rate" in k.lower() and isinstance(r.get(k), (int, float)):
-                    rates.append((f"{r.get('product', name)} {k}", r[k]))
-                    refs.append((round(r[k] * 100 if r[k] <= 1 else r[k], 2), f"[%] {r.get('product', name)} {k}"))
+                rate = num(r.get(k))
+                if "rate" in k.lower() and rate > 0:
+                    rates.append((f"{r.get('product', name)} {k}", rate))
+                    refs.append((round(rate * 100 if rate <= 1 else rate, 2), f"[%] {r.get('product', name)} {k}"))
     if balances:
         total = sum(b for _, b, _ in balances)
         available = sum(a for _, _, a in balances)
@@ -166,29 +181,28 @@ def references(row):
             add(total - b, f"all balances except {label}")
             add(available - a, f"available balances except {label}")
     credit = ctx.get("credit_statement") if isinstance(ctx.get("credit_statement"), dict) else {}
-    debt = credit.get("total_debt")
+    debt = num(credit.get("total_debt")) or None
     if isinstance(debt, (int, float)):
         if balances:
             add(sum(b for _, b, _ in balances) - debt, "sum of balances minus credit total_debt")
             add(sum(a for _, _, a in balances) - debt, "available balances minus credit total_debt")
         for k in ("paid_this_period", "minimum_payment", "no_interest_payment"):
-            if isinstance(credit.get(k), (int, float)):
-                add(debt - credit[k], f"credit total_debt − {k}")
-        rate = credit.get("annual_rate")
+            if num(credit.get(k)):
+                add(debt - num(credit.get(k)), f"credit total_debt − {k}")
+        rate = num(credit.get("annual_rate"))
         if isinstance(rate, (int, float)) and rate:
             r = rate / 100 if rate > 1 else rate
             add(debt * r / 12, "credit total_debt × annual_rate / 12 (one month of interest)")
         msi = credit.get("msi_plans") or []
         if msi:
-            add(sum((p.get("monthly_payment") or 0) * (p.get("remaining_payments") or 0) for p in msi), "remaining MSI installments total")
-        if isinstance(credit.get("annual_rate"), (int, float)):
-            rate = credit["annual_rate"]
+            add(sum(num(p.get("monthly_payment")) * num(p.get("remaining_payments")) for p in msi if isinstance(p, dict)), "remaining MSI installments total")
+        if rate:
             rates.append(("credit_statement.annual_rate", rate))
             refs.append((round(rate * 100 if rate <= 1 else rate, 2), "[%] credit_statement.annual_rate"))
     # Amounts said in the conversation: the customer's are references; both serve as principals for interest
     said = []
     for m in row["conversation"]:
-        for match in NUMBER.finditer(m["content"]):
+        for match in NUMBER.finditer(str(m.get("content", ""))):
             value = parse_number(match.group(1))
             if THOUSANDS.match(m["content"][match.end():]):
                 value *= 1000

@@ -17,7 +17,13 @@ def card(row, calculator=True):
     turns = "\n".join(f"[{i}] {m['role']}: {m['content']}" for i, m in enumerate(row["conversation"], 1))
     context = json.dumps(row["context"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     text = f"TOPIC: {row['topic']}\nCONTEXT: {context}\nCONVERSATION:\n{turns}"
-    return f"{text}\n{calculator_block(row)}" if calculator else text
+    if not calculator:
+        return text
+    try:
+        return f"{text}\n{calculator_block(row)}"
+    except Exception as e:  # unexpected data must never break a check: fall back to the card without arithmetic
+        print(f"[calc] skipped for {row['item_id']}: {type(e).__name__}: {e}", file=sys.stderr)
+        return text
 
 
 def nearest_good(rows):
