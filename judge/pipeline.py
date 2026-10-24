@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from . import config
-from .check import checker_prompt, decide, run_checks
+from .check import OTHER_ID, checker_prompt, decide, run_checks
 from .data import TOPICS, card, load_dataset, majority_labels, nearest_good, write_atomic
 from .explain import render
 from .llm import LLM, LLMUnavailable
@@ -66,6 +66,8 @@ def predictions(rows, votes, rulebook, fallback):
         label, fired[row["item_id"]] = None, []
         if row["topic"] in live:
             active = [r["id"] for r in topic_rules(rulebook, row["topic"]) if r["active"]]
+            if rulebook.get("other", {}).get("active"):
+                active.append(OTHER_ID)
             label, fired[row["item_id"]] = decide(votes.get(row["item_id"]), active)
         pred[row["item_id"]] = label or fallback[row["topic"]]
     return pred, fired
@@ -107,6 +109,8 @@ async def adapt(train_path, art_dir):
     fallback = majority_labels(rows)
     write_atomic(art / "fallback.json", json.dumps(fallback))
     rulebook = {"votes": config.VOTES, "global": {"rules": []},
+                "other": {"id": OTHER_ID, "title": "Clear error no rule covers: data contradicting the context, "
+                          "an unanswered question or an invented fact", "active": False},
                 "topics": {t: {"status": "fallback", "rules": []} for t in TOPICS}}
     save_artifacts(art, rows, rulebook, fallback, {}, started)
     try:
@@ -186,6 +190,16 @@ async def adapt(train_path, art_dir):
         for rule in rules:
             rule["stats"] = stats[rule["id"]]
             rule["active"] = not (stats[rule["id"]]["fp"] >= stats[rule["id"]]["tp"] and stats[rule["id"]]["fp"] > 0)
+    # OTHER stays on only if, among conversations the active rules pass as good, it catches more BAD than GOOD
+    rules_pred, _ = predictions(rows, votes, rulebook, fallback)
+    other = rulebook["other"]
+    other.update(rule_stats(live_rows, votes, [other])[OTHER_ID])
+    new_hits = [r for r in live_rows if rules_pred[r["item_id"]] == "good" and decide(votes[r["item_id"]], [OTHER_ID])[1]]
+    other["new_bad"] = sum(r["label"] == "bad" for r in new_hits)
+    other["new_good"] = sum(r["label"] == "good" for r in new_hits)
+    other["active"] = other["new_bad"] > other["new_good"]
+    log(f"OTHER safety net: catches {other['new_bad']} more BAD and {other['new_good']} more GOOD -> "
+        f"{'active' if other['active'] else 'disabled'}")
     pred = save_artifacts(art, rows, rulebook, fallback, votes, started)
     log(f"adapt done: train macro accuracy {macro_accuracy(rows, pred):.3f}, {llm.calls} calls, "
         f"{llm.failed_calls} failed, {round(time.monotonic() - started)} s")
@@ -220,8 +234,12 @@ async def evaluate(test_path, art_dir, out_dir):
         return
     live_rows = [r for r in rows if r["topic"] in live]
     votes = await run_checks(llm, live_rows, prompts, {t: topic_rules(rulebook, t) for t in live}, rulebook["votes"])
-    pred, _ = predictions(rows, votes, rulebook, fallback)
+    pred, fired = predictions(rows, votes, rulebook, fallback)
     write_predictions(out, pred)
+    if config.TRACE_FILE:  # dev only: votes and evidence per conversation, for error analysis
+        write_atomic(config.TRACE_FILE, "".join(json.dumps({"item_id": r["item_id"], "topic": r["topic"], "prediction": pred[r["item_id"]],
+                                                            "fired": fired[r["item_id"]], "votes": votes.get(r["item_id"], [])},
+                                                           ensure_ascii=False) + "\n" for r in rows))
     judged = sum(1 for r in live_rows if votes[r["item_id"]])
     log(f"eval done: {judged}/{len(rows)} conversations judged by the model, {llm.failed_calls} failed calls, "
         f"{round(time.monotonic() - started)} s")

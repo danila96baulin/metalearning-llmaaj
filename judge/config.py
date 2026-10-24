@@ -33,5 +33,7 @@ CALL_TIMEOUT_S = int(os.getenv("LLM_CALL_TIMEOUT_S", "300"))
 SPEND_LIMIT_USD = float(os.getenv("SPEND_LIMIT_USD", "15"))
 MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "5"))
 CACHE_DIR = os.getenv("LLM_CACHE_DIR", "")  # dev only: reuse identical calls across runs
+# Dev only: eval also writes per-conversation votes and evidence to this file
+TRACE_FILE = os.getenv("JUDGE_TRACE_FILE", "")
 # Dev only: run the LLM pipeline for these topics, the rest get fallback labels
 ONLY_TOPICS = [t for t in os.getenv("ONLY_TOPICS", "").split(",") if t]

@@ -45,9 +45,14 @@ def render(rows, rulebook, fallback, audit, manifest):
             f"2. A rule fires when it applies and is violated in a strict majority of the {votes_n} checker runs.",
             "3. The conversation is BAD if at least one active rule of its topic fires; otherwise it is GOOD. "
             "Strengths of a reply never offset a violation, and a rule's exceptions override its violation test.",
-            "4. Rules that flagged at least as many GOOD as BAD training conversations are disabled: "
+            "4. Safety net OTHER: the checker also reports a clear error that no rule covers (data contradicting the context, "
+            "an unanswered question, an invented fact). It fires only if all runs agree, and it is used only if it improved "
+            f"training accuracy: {'active' if rulebook['other']['active'] else 'disabled'}"
+            + (f", it caught {rulebook['other']['new_bad']} more BAD and {rulebook['other']['new_good']} more GOOD "
+               "training conversations than the rules alone." if 'new_bad' in rulebook['other'] else "."),
+            "5. Rules that flagged at least as many GOOD as BAD training conversations are disabled: "
             "the checker still answers them, but they never decide the label.",
-            "5. If a topic has no rules or the model API fails, the topic's majority training label is used: "
+            "6. If a topic has no rules or the model API fails, the topic's majority training label is used: "
             + ", ".join(f"{t} = {fallback[t]}" for t in TOPICS) + ".", ""]
 
     def table(rules):
@@ -74,7 +79,11 @@ def render(rows, rulebook, fallback, audit, manifest):
 
     out += ["## 3. Training examples for each rule", "",
             "Quotes are checked against the conversation text; ✓ marks a verbatim match. Labels are the expert's.", ""]
-    scopes = [("all", rulebook["global"]["rules"])] + [(t, rulebook["topics"][t]["rules"]) for t in TOPICS]
+    other = rulebook["other"]
+    other_rule = {"id": other["id"], "title": other["title"], "active": other["active"],
+                  "stats": {"tp": other.get("tp", "n/a"), "fp": other.get("fp", "n/a")}, "examples": []}
+    scopes = ([("all", rulebook["global"]["rules"])] + [(t, rulebook["topics"][t]["rules"]) for t in TOPICS]
+              + [("all", [other_rule])])
     for scope, scope_rules in scopes:
         for r in scope_rules:
             out.append(f"**{r['id']}** {r['title']}")

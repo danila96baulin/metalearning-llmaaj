@@ -18,11 +18,15 @@ def render_rule(rule):
     return text + (f"\n  example of a violation: \"{quote}\"" if quote else "")
 
 
+OTHER_ID = "OTHER"  # safety net for clear errors no induced rule covers
+
+
 def checker_prompt(topic, global_rules, topic_rules):
     """One template with a global block and a topic block; adapt saves it and eval reuses the file byte for byte."""
-    return (prompt("checker", topic)
-            .replace("{global_rules}", "\n\n".join(render_rule(r) for r in global_rules) or "none")
-            .replace("{topic_rules}", "\n\n".join(render_rule(r) for r in topic_rules) or "none"))
+    rules_part = (prompt("checker", topic)
+                  .replace("{global_rules}", "\n\n".join(render_rule(r) for r in global_rules) or "none")
+                  .replace("{topic_rules}", "\n\n".join(render_rule(r) for r in topic_rules) or "none"))
+    return f"{rules_part}\n\n{prompt('other_violation', topic)}"
 
 
 def checker_schema(rule_ids):
@@ -36,8 +40,11 @@ def checker_schema(rule_ids):
                 "violated": {"type": "boolean"},
                 "evidence": {"type": "string"},
             },
-            "required": ["rule_id", "applies", "violated", "evidence"]}}},
-        "required": ["checks"],
+            "required": ["rule_id", "applies", "violated", "evidence"]}},
+            "other_violation": {"type": "object", "properties": {"violated": {"type": "boolean"},
+                                                                 "evidence": {"type": "string"}},
+                                "required": ["violated", "evidence"]}},
+        "required": ["checks", "other_violation"],
     }
 
 
@@ -53,9 +60,12 @@ async def run_checks(llm, rows, prompts, rules_by_topic, votes):
                                thinking_level=config.CHECKER_THINKING_LEVEL)
         if not reply:
             return row["item_id"], None
-        return row["item_id"], {c["rule_id"]: {"applies": bool(c.get("applies")), "violated": bool(c.get("violated")),
-                                               "evidence": str(c.get("evidence", ""))}
-                                for c in reply.get("checks", []) if c.get("rule_id") in ids}
+        vote = {c["rule_id"]: {"applies": bool(c.get("applies")), "violated": bool(c.get("violated")),
+                               "evidence": str(c.get("evidence", ""))}
+                for c in reply.get("checks", []) if c.get("rule_id") in ids}
+        other = reply.get("other_violation") or {}
+        vote[OTHER_ID] = {"applies": True, "violated": bool(other.get("violated")), "evidence": str(other.get("evidence", ""))}
+        return row["item_id"], vote
 
     results = await asyncio.gather(*(one(r, k) for r in rows for k in range(votes)), return_exceptions=True)
     votes_by_item = {r["item_id"]: [] for r in rows}
@@ -69,9 +79,14 @@ async def run_checks(llm, rows, prompts, rules_by_topic, votes):
 
 
 def decide(votes, active_rule_ids):
-    """BAD iff an active rule applies and is violated in a strict majority of valid votes; None if no votes."""
+    """BAD iff an active rule applies and is violated in a strict majority of valid votes, or OTHER (if active)
+    in all of them; None if there are no votes."""
     if not votes:
         return None, []
-    fired = [rid for rid in active_rule_ids
-             if 2 * sum(1 for v in votes if v.get(rid, {}).get("applies") and v.get(rid, {}).get("violated")) > len(votes)]
+    fired = []
+    for rid in active_rule_ids:
+        hits = sum(1 for v in votes if v.get(rid, {}).get("applies") and v.get(rid, {}).get("violated"))
+        needed = len(votes) if rid == OTHER_ID else len(votes) // 2 + 1
+        if hits >= needed:
+            fired.append(rid)
     return ("bad" if fired else "good"), fired
