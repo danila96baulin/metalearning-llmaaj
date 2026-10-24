@@ -108,6 +108,8 @@ def save_artifacts(art, rows, rulebook, fallback, votes, started, llm=None, boun
                 "train_items": len(rows), "train_macro_accuracy": round(macro_accuracy(rows, pred), 4),
                 "train_status": {s: sum(d["status"] == s for d in detail.values()) for s in sorted({d["status"] for d in detail.values()})},
                 "llm": llm.stats() if used else None, "seconds": round(time.monotonic() - started)}
+    if used:
+        manifest.update(adapt_calls=llm.calls, adapt_spent_usd=round(llm.spent, 3))
     write_atomic(art / "manifest.json", json.dumps(manifest, indent=1))
     if boundaries is not None:
         write_atomic(art / "boundaries.json", json.dumps(boundaries, ensure_ascii=False, indent=1))
@@ -223,7 +225,7 @@ async def adapt(train_path, art_dir):
         log(f"boundary summary skipped: {e}")
     pred = save_artifacts(art, rows, rulebook, fallback, votes, started, llm, boundaries)
     log(f"adapt done: train macro accuracy {macro_accuracy(rows, pred):.3f}, {llm.calls} calls, "
-        f"{llm.failed_calls} failed, {round(time.monotonic() - started)} s")
+        f"{llm.failed_calls} failed, ${llm.spent:.2f} estimated, {round(time.monotonic() - started)} s")
 
 
 async def evaluate(test_path, art_dir, out_dir):
@@ -266,7 +268,7 @@ async def evaluate(test_path, art_dir, out_dir):
                 llm, started)
     judged = sum(1 for r in live_rows if votes[r["item_id"]])
     log(f"eval done: {judged}/{len(rows)} conversations judged by the model, {llm.failed_calls} failed calls, "
-        f"{len(rows) - judged} kept fallback labels, {round(time.monotonic() - started)} s")
+        f"{len(rows) - judged} kept fallback labels, ${llm.spent:.2f} estimated, {round(time.monotonic() - started)} s")
 
 
 def write_trace(rows, items, llm, started):
