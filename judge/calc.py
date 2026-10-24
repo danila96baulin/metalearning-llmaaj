@@ -244,9 +244,14 @@ def references(row):
         if balances:
             add(sum(b for _, b, _ in balances) - debt, "sum of balances minus credit total_debt")
             add(sum(a for _, _, a in balances) - debt, "available balances minus credit total_debt")
-        for k in ("paid_this_period", "minimum_payment", "no_interest_payment"):
+        for k in ("minimum_payment", "no_interest_payment"):
             if num(credit.get(k)):
                 add(debt - num(credit.get(k)), f"credit total_debt − {k}")
+        paid = num(credit.get("paid_this_period"))
+        if paid:  # payment status: 0.00 left to pay means that amount is paid in full
+            for k in ("total_debt", "no_interest_payment", "minimum_payment"):
+                if num(credit.get(k)):
+                    add(max(num(credit.get(k)) - paid, 0.0), f"left to pay: credit {k} − paid_this_period", zero=True)
         rate = num(credit.get("annual_rate"))
         if isinstance(rate, (int, float)) and rate:
             r = rate / 100 if rate > 1 else rate
@@ -283,6 +288,8 @@ def references(row):
         [(f"{'customer' if role == 'user' else 'assistant'} amount {fmt(v)}", v, role == "user") for role, v in dict.fromkeys(said)]
     for (rate_label, rate), (p_label, p, sourced), months in product(rates, principals, HORIZONS):
         r = rate / 100 if rate > 1 else rate
+        if r > 10:
+            continue  # not a real rate (over 1,000% a year); compounding it would overflow
         if months > 12 and not sourced:
             continue  # multi-year projections only from balances and customer amounts, to avoid chance matches
         add(p * r * months / 12, f"{p_label} × {rate_label} for {months} months")
