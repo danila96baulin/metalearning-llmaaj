@@ -16,3 +16,5 @@ A checker applied the global rules and the topic rules to labeled training conve
 
 {global_guidance}
 {topic_guidance}
+
+{candidate_requirements}

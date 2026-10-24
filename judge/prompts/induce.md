@@ -20,3 +20,5 @@ All labeled training conversations of the topic "{topic}". Each <bad> conversati
 
 {global_guidance}
 {topic_guidance}
+
+{candidate_requirements}

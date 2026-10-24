@@ -69,8 +69,9 @@ def prompt(name, topic="all"):
     """Prompt template with the topic and the guidance filled in."""
     text = (PROMPTS / f"{name}.md").read_text(encoding="utf-8")
     topic_part = guidance(topic) if topic != "all" else ""
+    candidates = (PROMPTS / "candidates.md").read_text(encoding="utf-8").strip()
     return (text.replace("{topic}", topic).replace("{global_guidance}", guidance("all"))
-            .replace("{topic_guidance}", topic_part).strip())
+            .replace("{topic_guidance}", topic_part).replace("{candidate_requirements}", candidates).strip())
 
 
 def normalize(scope, raw_rules, ids, keep_ids=(), limit=MAX_RULES):
