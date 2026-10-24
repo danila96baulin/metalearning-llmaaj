@@ -32,6 +32,17 @@ RULES_SCHEMA = {
                    "notes": {"type": "string"}},
     "required": ["rules", "notes"],
 }
+BOUNDARIES_SCHEMA = {
+    "type": "object",
+    "properties": {"groups": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"kind": {"type": "string", "enum": ["expert_inconsistent", "rule_gap", "rule_too_broad",
+                                                            "checker_unstable"]},
+                       "pattern": {"type": "string"},
+                       "item_ids": {"type": "array", "items": {"type": "string"}}},
+        "required": ["kind", "pattern", "item_ids"]}}},
+    "required": ["groups"],
+}
 SCOPED_SCHEMA = {
     "type": "object",
     "properties": {"rules": {"type": "array", "items": {
@@ -43,10 +54,14 @@ SCOPED_SCHEMA = {
 }
 
 
-def guidance(scope):
-    """Optional hand-written guidance for a topic, or for all topics when scope is 'all'."""
+def guidance_text(scope):
+    """Optional hand-written guidance for a topic, or for all topics when scope is 'all'; empty if none."""
     name = "global" if scope == "all" else scope
-    text = re.sub(r"<!--.*?-->", "", (PROMPTS / "topics" / f"{name}.md").read_text(encoding="utf-8"), flags=re.S).strip()
+    return re.sub(r"<!--.*?-->", "", (PROMPTS / "topics" / f"{name}.md").read_text(encoding="utf-8"), flags=re.S).strip()
+
+
+def guidance(scope):
+    text = guidance_text(scope)
     return f"<guidance>\n{text}\n</guidance>" if text else ""
 
 
@@ -136,3 +151,21 @@ async def refine_topic(llm, topic, global_rules, rules, stats, missed, flagged, 
         return None
     ids = {e["item_id"] for r in rules for e in r["examples"]} | {r["item_id"] for r in missed + flagged}
     return normalize(topic, reply["rules"], ids, keep_ids={r["id"] for r in rules})
+
+
+async def describe_boundaries(llm, rules, errors, votes):
+    """Group the training conversations the final rules misjudge by why they are hard, for the jury."""
+    errors = errors[:2 * MAX_ERRORS_SHOWN]
+    parts = [f"<rules>\n{json.dumps([public(r) for r in rules], ensure_ascii=False, indent=1)}\n</rules>"]
+    for row, prediction in errors:
+        fired = {rid: c.get("evidence", "") for v in votes.get(row["item_id"], []) for rid, c in v.items()
+                 if c.get("applies") and c.get("violated")}
+        parts.append(f"<misjudged item_id=\"{row['item_id']}\" expert=\"{row['label']}\" checker=\"{prediction}\">\n"
+                     f"checker flags: {json.dumps(fired, ensure_ascii=False)}\n{card(row)}\n</misjudged>")
+    parts.append("Based on the misjudged conversations above, group them by why they are hard.")
+    reply = await llm.json(config.INDUCER_MODEL, prompt("boundaries"), "\n\n".join(parts), BOUNDARIES_SCHEMA, 16384,
+                           thinking_level=config.INDUCER_THINKING_LEVEL)
+    ids = {row["item_id"] for row, _ in errors}
+    groups = [{"kind": g.get("kind", "rule_gap"), "pattern": str(g.get("pattern", "")).strip(),
+               "item_ids": [i for i in g.get("item_ids", []) if i in ids]} for g in (reply or {}).get("groups", [])[:6]]
+    return [g for g in groups if g["item_ids"] and g["pattern"]]
